@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>D~SENSE | 自动化测试控制台</title>
+    <style>
+        body {
+            background-color: #1e1e1e;
+            color: #d4d4d4;
+            font-family: 'Consolas', 'Monaco', monospace;
+            margin: 0;
+            display: flex;
+            height: 100vh;
+        }
+        #preview-container {
+            flex: 1;
+            border-right: 2px solid #333;
+            display: flex;
+            flex-direction: column;
+        }
+        #preview-header {
+            padding: 10px;
+            background: #252526;
+            border-bottom: 1px solid #333;
+            font-weight: bold;
+        }
+        iframe {
+            flex: 1;
+            border: none;
+            width: 100%;
+        }
+        #console-container {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            background: #1e1e1e;
+        }
+        .log-entry {
+            margin-bottom: 8px;
+            padding: 5px;
+            border-radius: 4px;
+            border-left: 3px solid transparent;
+        }
+        .log-info { border-left-color: #007acc; background: rgba(0, 122, 204, 0.1); }
+        .log-pass { border-left-color: #4caf50; background: rgba(76, 175, 80, 0.1); color: #4caf50; }
+        .log-fail { border-left-color: #f44336; background: rgba(244, 67, 54, 0.1); color: #f44336; }
+        .log-warn { border-left-color: #ff9800; background: rgba(255, 152, 0, 0.1); color: #ff9800; }
+        
+        button {
+            padding: 8px 16px;
+            background: #0e639c;
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-family: inherit;
+            margin-bottom: 20px;
+        }
+        button:hover { background: #1177bb; }
+    </style>
+</head>
+<body>
+    <div id="preview-container">
+        <div id="preview-header">
+            目标页面: login.html
+        </div>
+        <iframe id="targetFrame" src="login.html"></iframe>
+    </div>
+    <div id="console-container">
+        <h2>自动化测试报告</h2>
+        <button onclick="runTests()">运行测试套件 (Run Tests)</button>
+        <div id="logs"></div>
+    </div>
+
+    <script>
+        const logs = document.getElementById('logs');
+        const iframe = document.getElementById('targetFrame');
+
+        function log(message, type = 'info') {
+            const div = document.createElement('div');
+            div.className = `log-entry log-${type}`;
+            const time = new Date().toLocaleTimeString();
+            div.textContent = `[${time}] ${message}`;
+            logs.appendChild(div);
+            logs.scrollTop = logs.scrollHeight;
+        }
+
+        function sleep(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+
+        async function runTests() {
+            logs.innerHTML = '';
+            log('开始初始化测试环境...', 'info');
+            
+            // 重载 iframe 以确保环境纯净
+            iframe.contentWindow.location.reload();
+            await new Promise(resolve => iframe.onload = resolve);
+            await sleep(500); // 等待 JS 初始化
+
+            const doc = iframe.contentDocument;
+            const win = iframe.contentWindow;
+
+            // Hook alert 以便测试
+            let alertMsg = null;
+            win.alert = function(msg) {
+                alertMsg = msg;
+                log(`捕获到弹窗: ${msg}`, 'warn');
+            };
+
+            try {
+                // --- Test Case 1: 检查元素存在性 ---
+                log('Test 1: 检查关键 DOM 元素...', 'info');
+                const userIn = doc.getElementById('username');
+                const passIn = doc.getElementById('password');
+                const btn = doc.getElementById('submitBtn');
+                
+                if (userIn && passIn && btn) {
+                    log('PASS: 所有输入框和按钮已就绪', 'pass');
+                } else {
+                    throw new Error('关键元素缺失');
+                }
+
+                // --- Test Case 2: 空输入验证 ---
+                log('Test 2: 验证空输入拦截...', 'info');
+                btn.click();
+                const userError = doc.getElementById('usernameError');
+                if (userError && getComputedStyle(userError).display !== 'none') {
+                    log('PASS: 成功拦截空用户名', 'pass');
+                } else {
+                    log('FAIL: 未显示用户名错误提示', 'fail');
+                }
+
+                // --- Test Case 3: 缺密码验证 ---
+                log('Test 3: 验证缺失密码拦截...', 'info');
+                userIn.value = 'TestUser';
+                // 触发 input 事件以消除之前的错误提示
+                userIn.dispatchEvent(new Event('input'));
+                
+                btn.click();
+                const passError = doc.getElementById('passwordError');
+                if (passError && getComputedStyle(passError).display !== 'none') {
+                    log('PASS: 成功拦截空密码', 'pass');
+                } else {
+                    log('FAIL: 未显示密码错误提示', 'fail');
+                }
+
+                // --- Test Case 4: 正常登录流程 ---
+                log('Test 4: 验证正常登录流程...', 'info');
+                passIn.value = 'Secret123';
+                passIn.dispatchEvent(new Event('input'));
+                
+                btn.click();
+                
+                // 检查按钮状态是否变为加载中
+                if (btn.disabled && btn.innerHTML.includes('AUTHENTICATING')) {
+                    log('PASS: 按钮进入加载状态', 'pass');
+                } else {
+                    log('FAIL: 按钮未进入加载状态', 'fail');
+                }
+
+                // 等待模拟请求完成 (login.html 中设置了 1500ms)
+                log('等待后端响应模拟 (1.5s)...', 'info');
+                await sleep(1600);
+
+                if (alertMsg && alertMsg.includes('安全校验通过')) {
+                    log('PASS: 登录成功，收到成功反馈', 'pass');
+                } else {
+                    log(`FAIL: 未收到预期的成功反馈 (实际: ${alertMsg})`, 'fail');
+                }
+
+                log('=== 所有测试执行完毕 ===', 'info');
+
+            } catch (e) {
+                log(`测试中断: ${e.message}`, 'fail');
+                console.error(e);
+            }
+        }
+    </script>
+</body>
+</html>
